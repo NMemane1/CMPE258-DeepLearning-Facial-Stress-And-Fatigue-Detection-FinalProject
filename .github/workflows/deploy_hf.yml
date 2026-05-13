@@ -26,6 +26,15 @@ jobs:
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
           HF_SPACE: ${{ secrets.HF_SPACE_NAME }}
         run: |
+          # Sanity check secrets
+          if [ -z "$HF_TOKEN" ] || [ -z "$HF_USERNAME" ] || [ -z "$HF_SPACE" ]; then
+            echo "ERROR: One or more required secrets are empty."
+            echo "HF_TOKEN set: $([ -n "$HF_TOKEN" ] && echo yes || echo no)"
+            echo "HF_USERNAME set: $([ -n "$HF_USERNAME" ] && echo yes || echo no)"
+            echo "HF_SPACE set: $([ -n "$HF_SPACE" ] && echo yes || echo no)"
+            exit 1
+          fi
+
           # Configure git
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
@@ -54,10 +63,10 @@ jobs:
           EOF
 
           cd /tmp/space
-          git init
+          git init -b main
           git lfs install
           git lfs track "*.bin" "*.safetensors" "*.pt"
           git add .
           git commit -m "Deploy from GitHub Actions @ ${{ github.sha }}"
-          git remote add hf https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE}
+          git remote add hf "https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE}"
           git push --force hf main:main
