@@ -1,0 +1,27 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    container_name: stress-fatigue-app
+    ports:
+      - "7860:7860"
+    environment:
+      MODEL_REPO: ${MODEL_REPO:-NMemane1/facial-stress-fatigue-dinov2}
+      ENABLE_LLM: ${ENABLE_LLM:-true}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./assets:/workspace/assets:ro
+    restart: unless-stopped
+
+  tensorboard:
+    image: tensorflow/tensorflow:2.15.0
+    container_name: stress-fatigue-tb
+    command: tensorboard --logdir=/logs --host=0.0.0.0 --port=6006
+    ports:
+      - "6006:6006"
+    volumes:
+      - ./outputs:/logs:ro
+    profiles:
+      - dev

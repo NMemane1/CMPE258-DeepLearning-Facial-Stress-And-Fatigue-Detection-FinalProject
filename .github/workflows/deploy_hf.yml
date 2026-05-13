@@ -1,0 +1,63 @@
+name: Deploy to HuggingFace Spaces
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "src/**"
+      - "requirements.txt"
+      - ".github/workflows/deploy_hf.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to HuggingFace Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USERNAME: ${{ secrets.HF_USERNAME }}
+          HF_SPACE: ${{ secrets.HF_SPACE_NAME }}
+        run: |
+          # Configure git
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+
+          # Stage everything the Space needs at the root
+          mkdir -p /tmp/space
+          cp app/app.py /tmp/space/app.py
+          cp app/requirements.txt /tmp/space/requirements.txt
+          cp -r src /tmp/space/src
+
+          # Create a minimal README for the Space front matter
+          cat > /tmp/space/README.md <<'EOF'
+          ---
+          title: Facial Stress Fatigue Detection
+          emoji: 🧠
+          colorFrom: indigo
+          colorTo: purple
+          sdk: gradio
+          sdk_version: 4.20.0
+          app_file: app.py
+          pinned: false
+          license: mit
+          ---
+          # Facial Stress & Fatigue Detection
+          See full repo: https://github.com/${{ github.repository }}
+          EOF
+
+          cd /tmp/space
+          git init
+          git lfs install
+          git lfs track "*.bin" "*.safetensors" "*.pt"
+          git add .
+          git commit -m "Deploy from GitHub Actions @ ${{ github.sha }}"
+          git remote add hf https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE}
+          git push --force hf main:main

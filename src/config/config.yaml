@@ -1,0 +1,103 @@
+# ============================================================
+# Facial Stress & Fatigue Detection — Main Configuration
+# ============================================================
+# All hyperparameters and paths live here. Override from CLI via:
+#   python -m src.training.train --config src/config/config.yaml \
+#     training.lr=1e-4 training.batch_size=32
+# ============================================================
+
+experiment:
+  name: "dinov2_multitask_full"
+  seed: 42
+  output_dir: "outputs"
+  notes: |
+    Full multi-task fine-tuning of DINOv2-small with RandAugment and
+    class-balanced focal cross-entropy. Backbone layers 0-8 frozen.
+
+data:
+  drowsiness_root: "data/processed/drowsiness"
+  fer_root: "data/processed/fer2013"
+  image_size: 224
+  num_workers: 4
+  pin_memory: true
+  train_split: 0.70
+  val_split: 0.15
+  test_split: 0.15
+  subject_grouped: true  # for drowsiness dataset
+  cache_in_memory: false
+
+augmentation:
+  enabled: true
+  randaugment_n: 2
+  randaugment_m: 9
+  horizontal_flip_prob: 0.5
+  color_jitter:
+    brightness: 0.2
+    contrast: 0.2
+    saturation: 0.2
+  mixup_alpha: 0.0   # disabled
+
+model:
+  backbone: "facebook/dinov2-small"
+  embedding_dim: 384
+  shared_hidden: 256
+  num_stress_classes: 3
+  num_fatigue_classes: 2
+  dropout: 0.3
+  unfreeze_from_layer: 9  # freeze 0-8, fine-tune 9-11
+  use_focal_loss: true
+  focal_gamma: 2.0
+
+training:
+  batch_size: 64       # for TPU; reduce to 16 for Colab GPU
+  num_epochs: 15
+  early_stopping_patience: 3
+  early_stopping_metric: "val/balanced_acc_mean"
+
+  optimizer: "adamw"
+  lr_backbone: 3.0e-5
+  lr_head: 3.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+
+  scheduler: "cosine_with_warmup"
+  warmup_steps: 500
+  min_lr: 1.0e-6
+
+  loss_weights:
+    stress: 1.0
+    fatigue: 1.0
+    focal: 0.5
+
+  precision: "bf16"     # bf16 for TPU, fp16 for GPU, fp32 for CPU
+  gradient_clip: 1.0
+  accumulation_steps: 1
+
+  log_every_n_steps: 25
+  val_check_interval: 1.0
+  save_top_k: 3
+
+logging:
+  wandb_project: "facial-stress-fatigue"
+  wandb_entity: "NMemane1"   # change to your W&B username
+  tensorboard_dir: "runs"
+  log_predictions: true
+  log_gradients: true
+
+inference:
+  device: "auto"     # auto, cuda, cpu, mps
+  threshold_stress: 0.5
+  threshold_fatigue: 0.5
+  cache_size: 100
+
+llm:
+  provider: "anthropic"   # anthropic | openai
+  model: "claude-sonnet-4-5"
+  temperature: 0.7
+  max_tokens: 200
+  fallback_to_canned: true
+
+deployment:
+  hf_space_repo: "NMemane1/facial-stress-fatigue"
+  hf_model_repo: "NMemane1/facial-stress-fatigue-dinov2"
+  model_revision: "main"

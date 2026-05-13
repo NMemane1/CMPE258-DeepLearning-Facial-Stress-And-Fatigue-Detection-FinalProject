@@ -1,0 +1,97 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# ML / data
+data/raw/
+data/processed/
+data/interim/
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.pkl
+*.bin
+*.safetensors
+checkpoints/
+runs/
+wandb/
+mlruns/
+lightning_logs/
+tb_logs/
+outputs/
+logs/
+
+# Hugging Face cache
+.cache/
+~/.cache/huggingface/
+
+# DVC
+.dvc/cache
+.dvc/tmp
+
+# Secrets
+.env.local
+.env.*.local
+*.key
+secrets/
+
+# OS
+Thumbs.db
