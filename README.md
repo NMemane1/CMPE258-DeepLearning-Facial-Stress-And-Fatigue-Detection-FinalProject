@@ -29,7 +29,7 @@ with experiment tracking → model hosting → automatically-deployed web demo.
 | GitHub repository | https://github.com/NMemane1/CMPE258-DeepLearning-Facial-Stress-And-Fatigue-Detection-FinalProject |
 | Live demo (HF Space) | https://huggingface.co/spaces/NMemane1/facial-stress-fatigue |
 | Trained model (HF Hub) | https://huggingface.co/NMemane1/facial-stress-fatigue-dinov2 |
-| Training notebook (Kaggle) | [kaggle.com/code/nikitamemane/notebook076882e870](https://www.kaggle.com/code/nikitamemane/notebook076882e870) |
+| Training notebook (Kaggle) | [CMPE258 Facial Stress & Fatigue Detection — Training](https://www.kaggle.com/code/nikitamemane/cmpe258-facial-stress-fatigue-detection-training) |
 | Long presentation video (recording) | [Google Vids — full presentation recording](https://docs.google.com/videos/d/1vSD01KJXLdOZa-TEC4pe6P3RG8x6zWcEVr02FR7Ak9Q/edit?usp=sharing) |
 | Demo video | <!-- TODO: paste YouTube demo video URL here --> |
 | Slide deck (PPTX) | [`docs/Facial_Stress_Fatigue_Detection.pptx`](docs/Facial_Stress_Fatigue_Detection.pptx) |
