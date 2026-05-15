@@ -226,16 +226,33 @@ def _to_pil(image):
 # bubble out of this function, because that's what kills the Gradio worker
 # and produces the dreaded "No API found" error in the UI.
 # -----------------------------------------------------------------------------
+def _placeholder_labels(reason="unavailable"):
+    """Non-empty label dicts so gr.Label renders cleanly instead of 'Error'."""
+    stress = {c: 0.0 for c in STRESS_CLASSES}
+    fatigue = {c: 0.0 for c in FATIGUE_CLASSES}
+    stress[reason] = 1.0 if reason in stress else 0.0
+    fatigue[reason] = 1.0 if reason in fatigue else 0.0
+    # If reason isn't a known class, mark every class equally so the chart
+    # still draws something readable.
+    if sum(stress.values()) == 0:
+        stress = {c: 1.0 / len(STRESS_CLASSES) for c in STRESS_CLASSES}
+    if sum(fatigue.values()) == 0:
+        fatigue = {c: 1.0 / len(FATIGUE_CLASSES) for c in FATIGUE_CLASSES}
+    return stress, fatigue
+
+
 @torch.no_grad()
 def predict(image):
     try:
         if MODEL is None or PROCESSOR is None:
             err = INIT_ERROR or "model not initialized"
-            return {}, {}, f"Service unavailable at startup: {err}"
+            s, f = _placeholder_labels()
+            return s, f, f"Service unavailable at startup: {err}"
 
         pil = _to_pil(image)
         if pil is None:
-            return {}, {}, "Please upload or capture a face image first."
+            s, f = _placeholder_labels()
+            return s, f, "Please upload or capture a face image first."
 
         inputs = PROCESSOR(images=pil, return_tensors="pt")
         pixel_values = inputs["pixel_values"].to(DEVICE)
@@ -257,7 +274,8 @@ def predict(image):
         return stress_out, fatigue_out, note
     except Exception as e:
         log.error("predict() failed:\n%s", traceback.format_exc())
-        return {}, {}, f"Inference error: {type(e).__name__}: {e}"
+        s, f = _placeholder_labels()
+        return s, f, f"Inference error: {type(e).__name__}: {e}"
 
 
 # -----------------------------------------------------------------------------
