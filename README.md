@@ -30,7 +30,7 @@ with experiment tracking → model hosting → automatically-deployed web demo.
 | Live demo (HF Space) | https://huggingface.co/spaces/NMemane1/facial-stress-fatigue |
 | Trained model (HF Hub) | https://huggingface.co/NMemane1/facial-stress-fatigue-dinov2 |
 | Training notebook (Kaggle) | <!-- TODO: paste public Kaggle notebook URL here --> |
-| Long presentation video | <!-- TODO: paste YouTube long-form video URL here --> |
+| Long presentation video (recording) | [Google Vids — full presentation recording](https://docs.google.com/videos/d/1vSD01KJXLdOZa-TEC4pe6P3RG8x6zWcEVr02FR7Ak9Q/edit?usp=sharing) |
 | Demo video | <!-- TODO: paste YouTube demo video URL here --> |
 | Slide deck (PPTX) | [`docs/Facial_Stress_Fatigue_Detection.pptx`](docs/Facial_Stress_Fatigue_Detection.pptx) |
 
