@@ -20,6 +20,36 @@ import gradio as gr
 from huggingface_hub import hf_hub_download
 from transformers import AutoImageProcessor
 
+# -----------------------------------------------------------------------------
+# Monkey-patch gradio_client.utils to tolerate bool JSON-Schema values.
+#
+# gradio==5.9.1 (which HF Spaces hard-installs and we can't upgrade) crashes
+# in launch() while building the API info: schemas with `additionalProperties:
+# False` (a bool) hit `"const" in schema` and raise TypeError. This kills the
+# whole app before Gradio ever binds a port, which the frontend then reports
+# as "No API found". The patch makes both helpers return "Any" on a bool.
+# -----------------------------------------------------------------------------
+try:
+    from gradio_client import utils as _gc_utils
+
+    _orig_jsptp = _gc_utils._json_schema_to_python_type
+    _orig_gt = _gc_utils.get_type
+
+    def _safe_jsptp(schema, defs=None):
+        if isinstance(schema, bool):
+            return "Any"
+        return _orig_jsptp(schema, defs)
+
+    def _safe_get_type(schema):
+        if isinstance(schema, bool):
+            return "Any"
+        return _orig_gt(schema)
+
+    _gc_utils._json_schema_to_python_type = _safe_jsptp
+    _gc_utils.get_type = _safe_get_type
+except Exception:  # noqa: BLE001
+    pass
+
 # The Space layout (created by .github/workflows/deploy_hf.yml) places src/ next
 # to app.py at /home/user/app. Make sure that's importable.
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -306,7 +336,8 @@ with gr.Blocks(title="Facial Stress & Fatigue Detection", theme=gr.themes.Soft()
 
 
 if __name__ == "__main__":
-    # show_api=False avoids a Gradio 5.9.1 bug where /info crashes the
-    # frontend bootstrap with "No API found" (TypeError in
-    # gradio_client.utils.get_type — boolean schema value).
-    demo.queue(default_concurrency_limit=1).launch(show_api=False, ssr_mode=False)
+    demo.queue(default_concurrency_limit=1).launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        show_api=False,
+    )
