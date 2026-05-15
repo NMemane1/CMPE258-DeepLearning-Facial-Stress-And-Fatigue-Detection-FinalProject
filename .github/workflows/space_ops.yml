@@ -1,0 +1,99 @@
+name: HF Space Ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do"
+        required: true
+        default: "status"
+        type: choice
+        options:
+          - status
+          - restart
+          - factory_rebuild
+          - logs
+
+jobs:
+  ops:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install huggingface_hub
+        run: pip install -q "huggingface_hub>=0.26"
+
+      - name: Run action
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USERNAME: ${{ secrets.HF_USERNAME }}
+          HF_SPACE: ${{ secrets.HF_SPACE_NAME }}
+          ACTION: ${{ inputs.action }}
+        run: |
+          python - <<'PYEOF'
+          import os, json, sys, time
+          from huggingface_hub import HfApi
+
+          token = os.environ["HF_TOKEN"]
+          repo_id = f"{os.environ['HF_USERNAME']}/{os.environ['HF_SPACE']}"
+          action = os.environ["ACTION"]
+          api = HfApi(token=token)
+
+          if action == "status":
+              rt = api.get_space_runtime(repo_id)
+              print("=== runtime ===")
+              print(f"stage:    {rt.stage}")
+              print(f"hardware: {rt.hardware}")
+              print(f"raw:      {rt.raw}")
+
+          elif action == "restart":
+              print("Restarting space (no factory reboot)...")
+              api.restart_space(repo_id, factory_reboot=False)
+              print("Restart triggered. Polling...")
+              for _ in range(60):
+                  time.sleep(5)
+                  rt = api.get_space_runtime(repo_id)
+                  print(f"  stage={rt.stage}")
+                  if rt.stage in ("RUNNING", "RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR", "PAUSED"):
+                      break
+
+          elif action == "factory_rebuild":
+              print("Factory rebuilding space...")
+              api.restart_space(repo_id, factory_reboot=True)
+              print("Factory rebuild triggered. Polling...")
+              for _ in range(120):
+                  time.sleep(5)
+                  rt = api.get_space_runtime(repo_id)
+                  print(f"  stage={rt.stage}")
+                  if rt.stage in ("RUNNING", "RUNTIME_ERROR", "BUILD_ERROR", "CONFIG_ERROR", "PAUSED"):
+                      break
+
+          elif action == "logs":
+              # Container logs via huggingface_hub (returns SSE generator).
+              # We collect up to N events then stop.
+              print("=== container logs (tail) ===")
+              try:
+                  events = api.fetch_logs("run", repo_id)  # type: ignore[attr-defined]
+              except AttributeError:
+                  # Fallback for older versions: use the runtime stage + raw URL
+                  print("fetch_logs not available; using direct HTTP")
+                  import requests
+                  url = f"https://api.hf.space/v1/{repo_id}/logs/run"
+                  r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, stream=True, timeout=30)
+                  count = 0
+                  for line in r.iter_lines(decode_unicode=True):
+                      if not line:
+                          continue
+                      print(line)
+                      count += 1
+                      if count > 400:
+                          break
+              else:
+                  count = 0
+                  for ev in events:
+                      print(ev)
+                      count += 1
+                      if count > 400:
+                          break
+          else:
+              print(f"unknown action: {action}")
+              sys.exit(1)
+          PYEOF
