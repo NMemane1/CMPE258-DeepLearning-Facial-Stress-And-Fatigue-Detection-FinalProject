@@ -29,10 +29,26 @@ with experiment tracking → model hosting → automatically-deployed web demo.
 | GitHub repository | https://github.com/NMemane1/CMPE258-DeepLearning-Facial-Stress-And-Fatigue-Detection-FinalProject |
 | Live demo (HF Space) | https://huggingface.co/spaces/NMemane1/facial-stress-fatigue |
 | Trained model (HF Hub) | https://huggingface.co/NMemane1/facial-stress-fatigue-dinov2 |
-| Training notebook (Kaggle) | _add public Kaggle notebook link_ |
-| Long presentation video | _add YouTube link_ |
-| Demo video | _add YouTube link_ |
-| Slide deck | _add SlideShare / PDF link_ |
+| Training notebook (Kaggle) | <!-- TODO: paste public Kaggle notebook URL here --> |
+| Long presentation video | <!-- TODO: paste YouTube long-form video URL here --> |
+| Demo video | <!-- TODO: paste YouTube demo video URL here --> |
+| Slide deck | <!-- TODO: paste SlideShare / PDF URL here --> |
+
+---
+
+## Documentation
+
+All written deliverables live under [`docs/`](docs/):
+
+| Document | What it is |
+|---|---|
+| [`docs/report.md`](docs/report.md) | Full 6–8 page formal report (abstract → related work → data → methods → experiments → limitations → conclusion → references) |
+| [`docs/ablations.md`](docs/ablations.md) | Design-choice analysis — every component justified, each labelled `OBSERVED` or `ARGUED` |
+| [`docs/slides.md`](docs/slides.md) | 14-slide presentation deck with speaker notes (render with Marp / reveal.js, or paste into Slides/Keynote) |
+| [`docs/proposal.md`](docs/proposal.md) | Project proposal (problem, approach, datasets, methods, deliverables, risks, timeline, success criteria) |
+| [`docs/methodology.md`](docs/methodology.md) | "Why we chose what we chose" — long-form rationale for every hyperparameter (loss, activation, norm, augmentation, optimizer, schedule, LLM prompt design, evaluation choices) |
+| [`docs/architecture.md`](docs/architecture.md) | System architecture diagrams (model, training data flow, CI/CD) and parameter budget |
+| [`docs/DEEPWIKI.md`](docs/DEEPWIKI.md) | File-by-file walkthrough of the entire codebase — `src/`, `app/`, `notebooks/`, `.github/workflows/` |
 
 ---
 
