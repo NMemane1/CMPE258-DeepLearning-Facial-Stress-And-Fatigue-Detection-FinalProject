@@ -2,27 +2,31 @@
 # Facial Stress & Fatigue Detection - Gradio Space
 # CMPE 258 Deep Learning Final Project - San Jose State University
 #
-# Multi-task DINOv2-small model with two classification heads:
-#   - Stress  : 3 classes  (low / moderate / high)
-#   - Fatigue : 2 classes  (alert / fatigued)
-#
-# The trained checkpoint is pulled from the HF Hub model repo at startup.
-# An optional LLM layer (Claude) turns the raw predictions into a short
-# wellness recommendation; if no API key is configured it falls back to a
-# deterministic canned recommendation so the Space still works end-to-end.
+# Imports the actual training-time StressFatigueModel from src/models/ so
+# checkpoint keys match. Wraps everything defensively so a startup failure
+# can't kill the Gradio API routes (which manifests as "No API found").
 # =============================================================================
 
 import os
+import sys
+import json
 import logging
 import traceback
 
 import numpy as np
 import torch
-import torch.nn as nn
 from PIL import Image, ImageOps
 import gradio as gr
 from huggingface_hub import hf_hub_download
-from transformers import AutoModel, AutoImageProcessor
+from transformers import AutoImageProcessor
+
+# The Space layout (created by .github/workflows/deploy_hf.yml) places src/ next
+# to app.py at /home/user/app. Make sure that's importable.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+from src.models.stress_fatigue_model import StressFatigueModel  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,42 +42,7 @@ BACKBONE_NAME = "facebook/dinov2-small"
 STRESS_CLASSES = ["low", "moderate", "high"]
 FATIGUE_CLASSES = ["alert", "fatigued"]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-# Cap input resolution before the processor — phone photos are often 4000×3000
-# and can OOM the worker on the CPU-tier Space.
 MAX_IMAGE_EDGE = 1024
-
-
-# -----------------------------------------------------------------------------
-# Model definition - mirrors src/models/stress_fatigue_model.py from training
-# -----------------------------------------------------------------------------
-class StressFatigueModel(nn.Module):
-    """DINOv2 backbone + shared trunk + two task-specific classification heads."""
-
-    def __init__(
-        self,
-        backbone_name=BACKBONE_NAME,
-        embedding_dim=384,
-        shared_hidden=256,
-        num_stress_classes=3,
-        num_fatigue_classes=2,
-        dropout=0.3,
-    ):
-        super().__init__()
-        self.backbone = AutoModel.from_pretrained(backbone_name)
-
-        self.shared = nn.Sequential(
-            nn.Linear(embedding_dim, shared_hidden),
-            nn.GELU(),
-            nn.Dropout(dropout),
-        )
-        self.stress_head = nn.Linear(shared_hidden, num_stress_classes)
-        self.fatigue_head = nn.Linear(shared_hidden, num_fatigue_classes)
-
-    def forward(self, pixel_values):
-        outputs = self.backbone(pixel_values=pixel_values)
-        cls = outputs.last_hidden_state[:, 0, :]
-        h = self.shared(cls)
-        return self.stress_head(h), self.fatigue_head(h)
 
 
 # -----------------------------------------------------------------------------
@@ -90,25 +59,31 @@ def _startup():
         processor = AutoImageProcessor.from_pretrained(BACKBONE_NAME)
     except Exception as e:
         log.exception("processor load failed")
-        init_error = f"processor: {e!r}"
-        return processor, model, weights_ok, init_error
+        return processor, model, weights_ok, f"processor: {e!r}"
 
     try:
-        log.info("Building model...")
-        model = StressFatigueModel()
+        log.info("Downloading config + weights from %s ...", HF_MODEL_REPO)
+        try:
+            cfg_path = hf_hub_download(repo_id=HF_MODEL_REPO, filename="config.json")
+            with open(cfg_path) as fh:
+                cfg = json.load(fh)
+        except Exception as e:
+            log.warning("config.json download failed (%s); using defaults", e)
+            cfg = {}
+        # use_resnet_baseline must be off in deployment
+        cfg["use_resnet_baseline"] = False
+
+        log.info("Building model with config: %s", cfg)
+        model = StressFatigueModel(**cfg)
     except Exception as e:
         log.exception("model build failed")
-        init_error = f"backbone: {e!r}"
-        return processor, model, weights_ok, init_error
+        return processor, model, weights_ok, f"build: {e!r}"
 
     try:
-        log.info("Downloading trained weights from %s ...", HF_MODEL_REPO)
         weights_path = hf_hub_download(repo_id=HF_MODEL_REPO, filename="pytorch_model.bin")
         state = torch.load(weights_path, map_location="cpu", weights_only=False)
         if isinstance(state, dict) and "state_dict" in state:
             state = state["state_dict"]
-        # Strip common DDP / torch.compile prefixes — TPU/multi-GPU runs save
-        # with these and they make every key "unexpected" otherwise.
         cleaned = {}
         for k, v in state.items():
             nk = k
@@ -125,17 +100,21 @@ def _startup():
             log.info("first missing keys: %s", missing[:5])
         if unexpected:
             log.info("first unexpected keys: %s", unexpected[:5])
-        weights_ok = True
+        # We accept a small number of missing keys (e.g. backbone layers that
+        # were frozen and not saved), but if essentially nothing loaded we
+        # treat that as a failure for the UI's purposes.
+        loaded_keys = len(cleaned) - len(unexpected)
+        weights_ok = loaded_keys > 50  # rough sanity threshold
+        if not weights_ok:
+            log.warning("Only %d keys loaded — treating as untrained.", loaded_keys)
     except Exception as e:
         log.exception("weights load failed")
-        # Not fatal — we keep the untrained backbone so the UI still responds.
 
     try:
         model.to(DEVICE).eval()
     except Exception as e:
         log.exception("model.to(device) failed")
-        init_error = f"to_device: {e!r}"
-        model = None
+        return processor, None, weights_ok, f"to_device: {e!r}"
 
     return processor, model, weights_ok, init_error
 
@@ -166,7 +145,7 @@ def wellness_recommendation(stress_label, fatigue_label):
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if api_key:
         try:
-            import anthropic  # imported lazily so a bad install can't kill startup
+            import anthropic
             client = anthropic.Anthropic(api_key=api_key)
             prompt = (
                 f"A facial-analysis model estimates this person's stress level as "
@@ -191,14 +170,11 @@ def wellness_recommendation(stress_label, fatigue_label):
 
 
 # -----------------------------------------------------------------------------
-# Image normalization — Gradio 5.x can hand us a few different shapes
-# depending on browser, source, and component config. Normalize them all here.
+# Image normalization
 # -----------------------------------------------------------------------------
 def _to_pil(image):
     if image is None:
         return None
-    # editor/sketchpad components return a dict; handle gracefully even though
-    # we only configure upload/webcam.
     if isinstance(image, dict):
         for key in ("composite", "image", "background"):
             if image.get(key) is not None:
@@ -211,9 +187,7 @@ def _to_pil(image):
     if isinstance(image, np.ndarray):
         image = Image.fromarray(image)
     if not isinstance(image, Image.Image):
-        # Last-ditch attempt
         image = Image.fromarray(np.asarray(image))
-    # Phone photos store rotation in EXIF — apply it before resizing.
     image = ImageOps.exif_transpose(image)
     image = image.convert("RGB")
     if max(image.size) > MAX_IMAGE_EDGE:
@@ -221,26 +195,16 @@ def _to_pil(image):
     return image
 
 
-# -----------------------------------------------------------------------------
-# Inference — every path returns three values; we never let an exception
-# bubble out of this function, because that's what kills the Gradio worker
-# and produces the dreaded "No API found" error in the UI.
-# -----------------------------------------------------------------------------
-def _placeholder_labels(reason="unavailable"):
-    """Non-empty label dicts so gr.Label renders cleanly instead of 'Error'."""
-    stress = {c: 0.0 for c in STRESS_CLASSES}
-    fatigue = {c: 0.0 for c in FATIGUE_CLASSES}
-    stress[reason] = 1.0 if reason in stress else 0.0
-    fatigue[reason] = 1.0 if reason in fatigue else 0.0
-    # If reason isn't a known class, mark every class equally so the chart
-    # still draws something readable.
-    if sum(stress.values()) == 0:
-        stress = {c: 1.0 / len(STRESS_CLASSES) for c in STRESS_CLASSES}
-    if sum(fatigue.values()) == 0:
-        fatigue = {c: 1.0 / len(FATIGUE_CLASSES) for c in FATIGUE_CLASSES}
-    return stress, fatigue
+def _placeholder_labels():
+    return (
+        {c: 1.0 / len(STRESS_CLASSES) for c in STRESS_CLASSES},
+        {c: 1.0 / len(FATIGUE_CLASSES) for c in FATIGUE_CLASSES},
+    )
 
 
+# -----------------------------------------------------------------------------
+# Inference
+# -----------------------------------------------------------------------------
 @torch.no_grad()
 def predict(image):
     try:
@@ -257,7 +221,10 @@ def predict(image):
         inputs = PROCESSOR(images=pil, return_tensors="pt")
         pixel_values = inputs["pixel_values"].to(DEVICE)
 
-        stress_logits, fatigue_logits = MODEL(pixel_values)
+        out = MODEL(pixel_values)
+        # The training model returns a ModelOutput dataclass.
+        stress_logits = out.stress_logits
+        fatigue_logits = out.fatigue_logits
 
         stress_probs = torch.softmax(stress_logits, dim=-1)[0].detach().cpu().numpy()
         fatigue_probs = torch.softmax(fatigue_logits, dim=-1)[0].detach().cpu().numpy()
@@ -286,27 +253,16 @@ METHODOLOGY_MD = """
 
 **Architecture.** A `facebook/dinov2-small` vision transformer backbone (a
 self-supervised foundation model) produces a 384-dimensional embedding of the
-face image. A shared trunk (`Linear → GELU → Dropout`) feeds two
-task-specific linear heads — one for **stress** (3 classes) and one for
-**fatigue** (2 classes). This is a *multi-task* design: one backbone, two
-predictions, trained jointly.
+face image. A shared trunk (`Linear → LayerNorm → GELU → Dropout → Linear → ...`)
+feeds two task-specific classifier heads — one for **stress** (3 classes) and
+one for **fatigue** (2 classes).
 
 **Why DINOv2.** Self-supervised ViT features transfer well to face analysis
-without needing a huge labelled dataset. The lower 9 transformer layers are
-frozen; only the top layers + heads are fine-tuned, which keeps training fast
-and reduces overfitting on a modest dataset.
+without needing a huge labelled dataset. Lower transformer layers are frozen;
+only the top layers + heads are fine-tuned.
 
-**Why these design choices.**
-- *Class-balanced focal loss* — the stress classes are imbalanced, so focal
-  loss down-weights easy examples and class weights correct for frequency.
-- *RandAugment + horizontal flip* — augmentation improves robustness to
-  lighting and pose.
-- *Cosine LR schedule with warmup* — stable fine-tuning of a pretrained ViT.
-- *Masked multi-task loss* — each sample only contributes to the task it has a
-  label for, so the two datasets can be combined cleanly.
-
-**Training.** 11 epochs on a Tesla T4 GPU, mixed-precision (fp16), early
-stopping on mean balanced accuracy. Tracked with TensorBoard.
+**Training.** Multi-task focal loss, RandAugment, cosine LR schedule with
+warmup. Tracked with TensorBoard.
 """
 
 ABOUT_MD = """
@@ -315,12 +271,7 @@ ABOUT_MD = """
 **Facial Stress & Fatigue Detection** — CMPE 258 Deep Learning Final Project,
 San Jose State University.
 
-This Space demonstrates inference for a multi-task deep learning model that
-estimates stress and fatigue from a single face image, then uses a language
-model layer to turn the raw scores into a short, supportive wellness note.
-
 - **Model repo:** [`NMemane1/facial-stress-fatigue-dinov2`](https://huggingface.co/NMemane1/facial-stress-fatigue-dinov2)
-- **Code:** see the linked GitHub repository in the project README
 - **Datasets:** FER-2013 (emotion → stress mapping) and a yawn/eye drowsiness
   dataset (→ fatigue)
 
@@ -355,4 +306,7 @@ with gr.Blocks(title="Facial Stress & Fatigue Detection", theme=gr.themes.Soft()
 
 
 if __name__ == "__main__":
-    demo.queue(default_concurrency_limit=1).launch()
+    # show_api=False avoids a Gradio 5.9.1 bug where /info crashes the
+    # frontend bootstrap with "No API found" (TypeError in
+    # gradio_client.utils.get_type — boolean schema value).
+    demo.queue(default_concurrency_limit=1).launch(show_api=False, ssr_mode=False)
