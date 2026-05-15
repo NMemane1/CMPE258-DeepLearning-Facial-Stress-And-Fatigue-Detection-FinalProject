@@ -32,7 +32,7 @@ with experiment tracking → model hosting → automatically-deployed web demo.
 | Training notebook (Kaggle) | [CMPE258 Facial Stress & Fatigue Detection — Training](https://www.kaggle.com/code/nikitamemane/cmpe258-facial-stress-fatigue-detection-training) |
 | Long presentation video (recording) | [Google Vids — full presentation recording](https://docs.google.com/videos/d/1vSD01KJXLdOZa-TEC4pe6P3RG8x6zWcEVr02FR7Ak9Q/edit?usp=sharing) |
 | Demo video | _Included in the long presentation recording above (see live-demo segment)_ |
-| Slide deck (PPTX) | [`docs/Facial_Stress_Fatigue_Detection.pptx`](docs/Facial_Stress_Fatigue_Detection.pptx) |
+| Slide deck (PPTX) | [Download `Facial_Stress_Fatigue_Detection.pptx`](https://github.com/NMemane1/CMPE258-DeepLearning-Facial-Stress-And-Fatigue-Detection-FinalProject/raw/main/docs/Facial_Stress_Fatigue_Detection.pptx) (5.8 MB — too large for GitHub's inline preview; click to download) |
 
 ---
 
@@ -44,7 +44,7 @@ All written deliverables live under [`docs/`](docs/):
 |---|---|
 | [`docs/report.md`](docs/report.md) | Full 6–8 page formal report (abstract → related work → data → methods → experiments → limitations → conclusion → references) |
 | [`docs/ablations.md`](docs/ablations.md) | Design-choice analysis — every component justified, each labelled `OBSERVED` or `ARGUED` |
-| [`docs/Facial_Stress_Fatigue_Detection.pptx`](docs/Facial_Stress_Fatigue_Detection.pptx) | The presentation slide deck (PowerPoint format) — the deck used for the recorded long presentation |
+| [Download `Facial_Stress_Fatigue_Detection.pptx`](https://github.com/NMemane1/CMPE258-DeepLearning-Facial-Stress-And-Fatigue-Detection-FinalProject/raw/main/docs/Facial_Stress_Fatigue_Detection.pptx) | The presentation slide deck (PowerPoint format) — the deck used for the recorded long presentation. Click to download (GitHub can't preview PPTX inline). |
 | [`docs/slides.md`](docs/slides.md) | Markdown version of the slide content with speaker notes (working source) |
 | [`docs/proposal.md`](docs/proposal.md) | Project proposal (problem, approach, datasets, methods, deliverables, risks, timeline, success criteria) |
 | [`docs/methodology.md`](docs/methodology.md) | "Why we chose what we chose" — long-form rationale for every hyperparameter (loss, activation, norm, augmentation, optimizer, schedule, LLM prompt design, evaluation choices) |
