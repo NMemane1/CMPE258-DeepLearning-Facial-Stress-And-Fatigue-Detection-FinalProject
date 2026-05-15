@@ -13,15 +13,22 @@
 # =============================================================================
 
 import os
-import json
+import logging
+import traceback
 
 import numpy as np
 import torch
 import torch.nn as nn
-from PIL import Image
+from PIL import Image, ImageOps
 import gradio as gr
 from huggingface_hub import hf_hub_download
 from transformers import AutoModel, AutoImageProcessor
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
+)
+log = logging.getLogger("app")
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -31,6 +38,9 @@ BACKBONE_NAME = "facebook/dinov2-small"
 STRESS_CLASSES = ["low", "moderate", "high"]
 FATIGUE_CLASSES = ["alert", "fatigued"]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+# Cap input resolution before the processor — phone photos are often 4000×3000
+# and can OOM the worker on the CPU-tier Space.
+MAX_IMAGE_EDGE = 1024
 
 
 # -----------------------------------------------------------------------------
@@ -61,48 +71,102 @@ class StressFatigueModel(nn.Module):
 
     def forward(self, pixel_values):
         outputs = self.backbone(pixel_values=pixel_values)
-        # DINOv2 CLS token = pooled image representation
         cls = outputs.last_hidden_state[:, 0, :]
         h = self.shared(cls)
         return self.stress_head(h), self.fatigue_head(h)
 
 
 # -----------------------------------------------------------------------------
-# Load model + processor once at startup
+# Startup — every step wrapped so a failure here can't kill Gradio's API routes.
 # -----------------------------------------------------------------------------
-print("Loading image processor...")
-processor = AutoImageProcessor.from_pretrained(BACKBONE_NAME)
+def _startup():
+    processor = None
+    model = None
+    weights_ok = False
+    init_error = ""
 
-print("Building model...")
-model = StressFatigueModel()
+    try:
+        log.info("Loading image processor for %s ...", BACKBONE_NAME)
+        processor = AutoImageProcessor.from_pretrained(BACKBONE_NAME)
+    except Exception as e:
+        log.exception("processor load failed")
+        init_error = f"processor: {e!r}"
+        return processor, model, weights_ok, init_error
 
-print(f"Downloading trained weights from {HF_MODEL_REPO} ...")
-try:
-    weights_path = hf_hub_download(repo_id=HF_MODEL_REPO, filename="pytorch_model.bin")
-    state = torch.load(weights_path, map_location="cpu")
-    # tolerate either a raw state_dict or a {"state_dict": ...} wrapper
-    if isinstance(state, dict) and "state_dict" in state:
-        state = state["state_dict"]
-    missing, unexpected = model.load_state_dict(state, strict=False)
-    print(f"Loaded weights. missing={len(missing)} unexpected={len(unexpected)}")
-    WEIGHTS_OK = True
-except Exception as e:  # noqa: BLE001
-    print(f"WARNING: could not load trained weights ({e}). Using untrained backbone.")
-    WEIGHTS_OK = False
+    try:
+        log.info("Building model...")
+        model = StressFatigueModel()
+    except Exception as e:
+        log.exception("model build failed")
+        init_error = f"backbone: {e!r}"
+        return processor, model, weights_ok, init_error
 
-model.to(DEVICE).eval()
+    try:
+        log.info("Downloading trained weights from %s ...", HF_MODEL_REPO)
+        weights_path = hf_hub_download(repo_id=HF_MODEL_REPO, filename="pytorch_model.bin")
+        state = torch.load(weights_path, map_location="cpu", weights_only=False)
+        if isinstance(state, dict) and "state_dict" in state:
+            state = state["state_dict"]
+        # Strip common DDP / torch.compile prefixes — TPU/multi-GPU runs save
+        # with these and they make every key "unexpected" otherwise.
+        cleaned = {}
+        for k, v in state.items():
+            nk = k
+            for prefix in ("module.", "_orig_mod."):
+                if nk.startswith(prefix):
+                    nk = nk[len(prefix):]
+            cleaned[nk] = v
+        missing, unexpected = model.load_state_dict(cleaned, strict=False)
+        log.info(
+            "Loaded weights. missing=%d unexpected=%d",
+            len(missing), len(unexpected),
+        )
+        if missing:
+            log.info("first missing keys: %s", missing[:5])
+        if unexpected:
+            log.info("first unexpected keys: %s", unexpected[:5])
+        weights_ok = True
+    except Exception as e:
+        log.exception("weights load failed")
+        # Not fatal — we keep the untrained backbone so the UI still responds.
+
+    try:
+        model.to(DEVICE).eval()
+    except Exception as e:
+        log.exception("model.to(device) failed")
+        init_error = f"to_device: {e!r}"
+        model = None
+
+    return processor, model, weights_ok, init_error
+
+
+PROCESSOR, MODEL, WEIGHTS_OK, INIT_ERROR = _startup()
 
 
 # -----------------------------------------------------------------------------
 # LLM wellness layer (optional - falls back to canned text)
 # -----------------------------------------------------------------------------
+_CANNED = {
+    ("low", "alert"): "You look calm and alert. Keep up whatever you're doing — "
+                      "regular short breaks and steady hydration help maintain this.",
+    ("moderate", "alert"): "Mild stress detected. A two-minute breathing break or a "
+                           "short walk can help reset before it builds up.",
+    ("high", "alert"): "Elevated stress signals. Consider stepping away for a few "
+                       "minutes, stretching, and prioritising one task at a time.",
+    ("low", "fatigued"): "You seem relaxed but tired. Hydration, natural light, and "
+                         "a short rest can help restore energy.",
+    ("moderate", "fatigued"): "Both mild stress and fatigue are showing. A proper "
+                              "break — ideally away from screens — is a good idea.",
+    ("high", "fatigued"): "High stress combined with fatigue. This is a good moment "
+                          "to pause, rest, and return to demanding work later.",
+}
+
+
 def wellness_recommendation(stress_label, fatigue_label):
-    """Return a short, supportive wellness note for the predicted state."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if api_key:
         try:
-            import anthropic
-
+            import anthropic  # imported lazily so a bad install can't kill startup
             client = anthropic.Anthropic(api_key=api_key)
             prompt = (
                 f"A facial-analysis model estimates this person's stress level as "
@@ -117,59 +181,83 @@ def wellness_recommendation(stress_label, fatigue_label):
                 messages=[{"role": "user", "content": prompt}],
             )
             return msg.content[0].text
-        except Exception as e:  # noqa: BLE001
-            print(f"LLM call failed, using fallback: {e}")
+        except Exception as e:
+            log.warning("LLM call failed, using canned fallback: %s", e)
 
-    # Deterministic fallback so the Space works without an API key
-    canned = {
-        ("low", "alert"): "You look calm and alert. Keep up whatever you're doing - "
-                          "regular short breaks and steady hydration help maintain this.",
-        ("moderate", "alert"): "Mild stress detected. A two-minute breathing break or a "
-                               "short walk can help reset before it builds up.",
-        ("high", "alert"): "Elevated stress signals. Consider stepping away for a few "
-                           "minutes, stretching, and prioritising one task at a time.",
-        ("low", "fatigued"): "You seem relaxed but tired. Hydration, natural light, and "
-                            "a short rest can help restore energy.",
-        ("moderate", "fatigued"): "Both mild stress and fatigue are showing. A proper "
-                                  "break - ideally away from screens - is a good idea.",
-        ("high", "fatigued"): "High stress combined with fatigue. This is a good moment "
-                             "to pause, rest, and return to demanding work later.",
-    }
-    return canned.get(
+    return _CANNED.get(
         (stress_label, fatigue_label),
-        "Take a moment for yourself - short breaks, hydration, and rest go a long way.",
+        "Take a moment for yourself — short breaks, hydration, and rest go a long way.",
     )
 
 
 # -----------------------------------------------------------------------------
-# Inference
+# Image normalization — Gradio 5.x can hand us a few different shapes
+# depending on browser, source, and component config. Normalize them all here.
+# -----------------------------------------------------------------------------
+def _to_pil(image):
+    if image is None:
+        return None
+    # editor/sketchpad components return a dict; handle gracefully even though
+    # we only configure upload/webcam.
+    if isinstance(image, dict):
+        for key in ("composite", "image", "background"):
+            if image.get(key) is not None:
+                image = image[key]
+                break
+        else:
+            return None
+    if isinstance(image, str):
+        image = Image.open(image)
+    if isinstance(image, np.ndarray):
+        image = Image.fromarray(image)
+    if not isinstance(image, Image.Image):
+        # Last-ditch attempt
+        image = Image.fromarray(np.asarray(image))
+    # Phone photos store rotation in EXIF — apply it before resizing.
+    image = ImageOps.exif_transpose(image)
+    image = image.convert("RGB")
+    if max(image.size) > MAX_IMAGE_EDGE:
+        image.thumbnail((MAX_IMAGE_EDGE, MAX_IMAGE_EDGE), Image.LANCZOS)
+    return image
+
+
+# -----------------------------------------------------------------------------
+# Inference — every path returns three values; we never let an exception
+# bubble out of this function, because that's what kills the Gradio worker
+# and produces the dreaded "No API found" error in the UI.
 # -----------------------------------------------------------------------------
 @torch.no_grad()
 def predict(image):
-    if image is None:
-        return None, None, "Please upload or capture a face image first."
+    try:
+        if MODEL is None or PROCESSOR is None:
+            err = INIT_ERROR or "model not initialized"
+            return {}, {}, f"Service unavailable at startup: {err}"
 
-    if not isinstance(image, Image.Image):
-        image = Image.fromarray(image)
-    image = image.convert("RGB")
+        pil = _to_pil(image)
+        if pil is None:
+            return {}, {}, "Please upload or capture a face image first."
 
-    inputs = processor(images=image, return_tensors="pt").to(DEVICE)
-    stress_logits, fatigue_logits = model(inputs["pixel_values"])
+        inputs = PROCESSOR(images=pil, return_tensors="pt")
+        pixel_values = inputs["pixel_values"].to(DEVICE)
 
-    stress_probs = torch.softmax(stress_logits, dim=-1)[0].cpu().numpy()
-    fatigue_probs = torch.softmax(fatigue_logits, dim=-1)[0].cpu().numpy()
+        stress_logits, fatigue_logits = MODEL(pixel_values)
 
-    stress_label = STRESS_CLASSES[int(np.argmax(stress_probs))]
-    fatigue_label = FATIGUE_CLASSES[int(np.argmax(fatigue_probs))]
+        stress_probs = torch.softmax(stress_logits, dim=-1)[0].detach().cpu().numpy()
+        fatigue_probs = torch.softmax(fatigue_logits, dim=-1)[0].detach().cpu().numpy()
 
-    stress_out = {c: float(p) for c, p in zip(STRESS_CLASSES, stress_probs)}
-    fatigue_out = {c: float(p) for c, p in zip(FATIGUE_CLASSES, fatigue_probs)}
+        stress_label = STRESS_CLASSES[int(np.argmax(stress_probs))]
+        fatigue_label = FATIGUE_CLASSES[int(np.argmax(fatigue_probs))]
 
-    note = wellness_recommendation(stress_label, fatigue_label)
-    if not WEIGHTS_OK:
-        note = "[Demo mode: trained weights unavailable] " + note
+        stress_out = {c: float(p) for c, p in zip(STRESS_CLASSES, stress_probs)}
+        fatigue_out = {c: float(p) for c, p in zip(FATIGUE_CLASSES, fatigue_probs)}
 
-    return stress_out, fatigue_out, note
+        note = wellness_recommendation(stress_label, fatigue_label)
+        if not WEIGHTS_OK:
+            note = "[Demo mode: trained weights unavailable] " + note
+        return stress_out, fatigue_out, note
+    except Exception as e:
+        log.error("predict() failed:\n%s", traceback.format_exc())
+        return {}, {}, f"Inference error: {type(e).__name__}: {e}"
 
 
 # -----------------------------------------------------------------------------
@@ -180,8 +268,8 @@ METHODOLOGY_MD = """
 
 **Architecture.** A `facebook/dinov2-small` vision transformer backbone (a
 self-supervised foundation model) produces a 384-dimensional embedding of the
-face image. A shared trunk (`Linear -> GELU -> Dropout`) feeds two
-task-specific linear heads - one for **stress** (3 classes) and one for
+face image. A shared trunk (`Linear → GELU → Dropout`) feeds two
+task-specific linear heads — one for **stress** (3 classes) and one for
 **fatigue** (2 classes). This is a *multi-task* design: one backbone, two
 predictions, trained jointly.
 
@@ -191,12 +279,12 @@ frozen; only the top layers + heads are fine-tuned, which keeps training fast
 and reduces overfitting on a modest dataset.
 
 **Why these design choices.**
-- *Class-balanced focal loss* - the stress classes are imbalanced, so focal
+- *Class-balanced focal loss* — the stress classes are imbalanced, so focal
   loss down-weights easy examples and class weights correct for frequency.
-- *RandAugment + horizontal flip* - augmentation improves robustness to
+- *RandAugment + horizontal flip* — augmentation improves robustness to
   lighting and pose.
-- *Cosine LR schedule with warmup* - stable fine-tuning of a pretrained ViT.
-- *Masked multi-task loss* - each sample only contributes to the task it has a
+- *Cosine LR schedule with warmup* — stable fine-tuning of a pretrained ViT.
+- *Masked multi-task loss* — each sample only contributes to the task it has a
   label for, so the two datasets can be combined cleanly.
 
 **Training.** 11 epochs on a Tesla T4 GPU, mixed-precision (fp16), early
@@ -206,7 +294,7 @@ stopping on mean balanced accuracy. Tracked with TensorBoard.
 ABOUT_MD = """
 ## About
 
-**Facial Stress & Fatigue Detection** - CMPE 258 Deep Learning Final Project,
+**Facial Stress & Fatigue Detection** — CMPE 258 Deep Learning Final Project,
 San Jose State University.
 
 This Space demonstrates inference for a multi-task deep learning model that
@@ -215,8 +303,8 @@ model layer to turn the raw scores into a short, supportive wellness note.
 
 - **Model repo:** [`NMemane1/facial-stress-fatigue-dinov2`](https://huggingface.co/NMemane1/facial-stress-fatigue-dinov2)
 - **Code:** see the linked GitHub repository in the project README
-- **Datasets:** FER-2013 (emotion -> stress mapping) and a yawn/eye drowsiness
-  dataset (-> fatigue)
+- **Datasets:** FER-2013 (emotion → stress mapping) and a yawn/eye drowsiness
+  dataset (→ fatigue)
 
 *This is an academic project. It is not a medical device and must not be used
 for diagnosis.*
@@ -249,4 +337,4 @@ with gr.Blocks(title="Facial Stress & Fatigue Detection", theme=gr.themes.Soft()
 
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.queue(default_concurrency_limit=1).launch()
