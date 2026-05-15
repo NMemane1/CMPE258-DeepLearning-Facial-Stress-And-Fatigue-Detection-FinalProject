@@ -32,7 +32,7 @@ with experiment tracking → model hosting → automatically-deployed web demo.
 | Training notebook (Kaggle) | <!-- TODO: paste public Kaggle notebook URL here --> |
 | Long presentation video | <!-- TODO: paste YouTube long-form video URL here --> |
 | Demo video | <!-- TODO: paste YouTube demo video URL here --> |
-| Slide deck | <!-- TODO: paste SlideShare / PDF URL here --> |
+| Slide deck (PPTX) | [`docs/Facial_Stress_Fatigue_Detection.pptx`](docs/Facial_Stress_Fatigue_Detection.pptx) |
 
 ---
 
@@ -44,7 +44,8 @@ All written deliverables live under [`docs/`](docs/):
 |---|---|
 | [`docs/report.md`](docs/report.md) | Full 6–8 page formal report (abstract → related work → data → methods → experiments → limitations → conclusion → references) |
 | [`docs/ablations.md`](docs/ablations.md) | Design-choice analysis — every component justified, each labelled `OBSERVED` or `ARGUED` |
-| [`docs/slides.md`](docs/slides.md) | 14-slide presentation deck with speaker notes (render with Marp / reveal.js, or paste into Slides/Keynote) |
+| [`docs/Facial_Stress_Fatigue_Detection.pptx`](docs/Facial_Stress_Fatigue_Detection.pptx) | The presentation slide deck (PowerPoint format) — the deck used for the recorded long presentation |
+| [`docs/slides.md`](docs/slides.md) | Markdown version of the slide content with speaker notes (working source) |
 | [`docs/proposal.md`](docs/proposal.md) | Project proposal (problem, approach, datasets, methods, deliverables, risks, timeline, success criteria) |
 | [`docs/methodology.md`](docs/methodology.md) | "Why we chose what we chose" — long-form rationale for every hyperparameter (loss, activation, norm, augmentation, optimizer, schedule, LLM prompt design, evaluation choices) |
 | [`docs/architecture.md`](docs/architecture.md) | System architecture diagrams (model, training data flow, CI/CD) and parameter budget |
